@@ -31,6 +31,18 @@ def _make_tmux_mocks(monkeypatch, captured: dict, *, tmux_ok: bool = True, agent
     monkeypatch.setattr("clawteam.spawn.tmux_backend._confirm_workspace_trust_if_prompted", lambda *a, **kw: False)
 
 
+def _resolve_spawn_cmd(captured: dict) -> str:
+    """Get the full shell command from captured tmux spawn, reading temp script if needed."""
+    import re
+    spawn_cmd = captured.get("spawn_cmd", [])
+    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    if full_shell_cmd.startswith("exec "):
+        script_path = re.sub(r"^exec\s+", "", full_shell_cmd).strip()
+        with open(script_path) as f:
+            full_shell_cmd = f.read()
+    return full_shell_cmd
+
+
 def test_tmux_backend_includes_agent_flag_when_openclaw_agent_set(monkeypatch, capsys):
     """tmux_backend.spawn() with openclaw_agent='researcher' should include --agent researcher in command."""
     from clawteam.spawn.tmux_backend import TmuxBackend
@@ -49,10 +61,7 @@ def test_tmux_backend_includes_agent_flag_when_openclaw_agent_set(monkeypatch, c
         openclaw_agent="researcher",
     )
 
-    # The spawn command (new-session or new-window) should contain --agent researcher
-    spawn_cmd = captured.get("spawn_cmd", [])
-    # The full shell command is the last element in the tmux new-session/new-window call
-    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    full_shell_cmd = _resolve_spawn_cmd(captured)
     assert "--agent researcher" in full_shell_cmd, (
         f"Expected '--agent researcher' in final command, got: {full_shell_cmd!r}"
     )
@@ -76,8 +85,7 @@ def test_tmux_backend_excludes_agent_flag_when_not_set(monkeypatch):
         openclaw_agent=None,
     )
 
-    spawn_cmd = captured.get("spawn_cmd", [])
-    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    full_shell_cmd = _resolve_spawn_cmd(captured)
     # The exit hook always contains "--agent <name>" for lifecycle; we only want to
     # verify the openclaw command itself (before the ";") does not carry --agent.
     # Split on ";" to isolate the openclaw command portion.
@@ -109,8 +117,7 @@ def test_tmux_backend_drops_agent_flag_when_unsupported(monkeypatch, capsys):
         openclaw_agent="researcher",
     )
 
-    spawn_cmd = captured.get("spawn_cmd", [])
-    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    full_shell_cmd = _resolve_spawn_cmd(captured)
     # --agent should NOT appear in the openclaw command segment
     openclaw_part = full_shell_cmd.split(";")
     openclaw_cmd_segment = next(
@@ -142,8 +149,7 @@ def test_tmux_backend_sets_openclaw_workspace_env(monkeypatch):
         prompt="hello world",
     )
 
-    spawn_cmd = captured.get("spawn_cmd", [])
-    full_shell_cmd = spawn_cmd[-1] if spawn_cmd else ""
+    full_shell_cmd = _resolve_spawn_cmd(captured)
     assert "OPENCLAW_WORKSPACE=" in full_shell_cmd, (
         f"Expected OPENCLAW_WORKSPACE in exports, got: {full_shell_cmd!r}"
     )

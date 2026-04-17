@@ -37,6 +37,9 @@ from clawteam.spawn.command_validation import (
 
 _SHELL_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
+# tmux internal command buffer threshold — longer commands go through a temp script.
+_TMUX_CMD_LENGTH_THRESHOLD = 2048
+
 _WORKER_AGENTS_MD = """\
 # ClawTeam Worker
 
@@ -184,7 +187,6 @@ class TmuxBackend(SpawnBackend):
         if model and is_claude_command(normalized_command):
             final_command.extend(["--model", model])
 
-        # OpenClaw TUI: pass --message for initial prompt and --session for isolation
         if is_openclaw_command(normalized_command):
             session_key = f"clawteam-{team_name}-{agent_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
@@ -261,6 +263,18 @@ class TmuxBackend(SpawnBackend):
             full_cmd = f"{unset_clause}{export_str}; cd {shlex.quote(cwd)} && trap \"{exit_hook}\" EXIT; {cmd_str}"
         else:
             full_cmd = f"{unset_clause}{export_str}; trap \"{exit_hook}\" EXIT; {cmd_str}"
+
+        # Bypass tmux internal command buffer limit via temp script.
+        if len(full_cmd) > _TMUX_CMD_LENGTH_THRESHOLD:
+            script_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".sh", delete=False,
+                prefix=f"clawteam-spawn-{agent_name}-",
+            )
+            script_file.write("#!/bin/sh\n")
+            script_file.write(full_cmd)
+            script_file.close()
+            os.chmod(script_file.name, 0o755)
+            full_cmd = f"exec {shlex.quote(script_file.name)}"
 
         # Check if tmux session exists
         check = subprocess.run(

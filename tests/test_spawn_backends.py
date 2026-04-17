@@ -18,6 +18,17 @@ from clawteam.spawn.tmux_backend import (
 from clawteam.team.routing_policy import RuntimeEnvelope
 
 
+def _resolve_tmux_cmd(tmux_call):
+    """Get the full command from a tmux call, reading temp script if needed."""
+    import re
+    full_cmd = tmux_call[-1]
+    if full_cmd.startswith("exec "):
+        script_path = re.sub(r"^exec\s+", "", full_cmd).strip()
+        with open(script_path) as f:
+            return f.read()
+    return full_cmd
+
+
 class DummyProcess:
     def __init__(self, pid: int = 4321):
         self.pid = pid
@@ -211,7 +222,7 @@ def test_tmux_backend_exports_spawn_path_for_agent_commands(monkeypatch, tmp_pat
     )
 
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     assert "export PATH=" in full_cmd
     assert str(clawteam_bin.parent) in full_cmd
     assert "/usr/bin" in full_cmd
@@ -434,7 +445,7 @@ def test_tmux_backend_normalizes_bare_nanobot_to_agent(monkeypatch, tmp_path):
     )
 
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     assert " nanobot agent -w /tmp/demo -m 'do work'" in full_cmd
 
 
@@ -777,7 +788,7 @@ def test_tmux_backend_gemini_skip_permissions_and_prompt(monkeypatch, tmp_path):
     )
 
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     assert "trap \"" in full_cmd and "gemini --yolo -p 'analyze this repo'" in full_cmd
 
 
@@ -896,7 +907,7 @@ def test_tmux_backend_kimi_skip_permissions_workspace_and_prompt(monkeypatch, tm
     )
 
     new_session = next(call for call in run_calls if call[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     assert "trap \"" in full_cmd and "kimi --yolo -w /tmp/demo --print -p 'fix the bug'" in full_cmd
 
 
@@ -1162,7 +1173,7 @@ def test_tmux_backend_qwen_skip_permissions_and_prompt(monkeypatch, tmp_path):
 
     assert "spawned" in result
     new_session = next(c for c in run_calls if c[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     assert "trap \"" in full_cmd and "qwen --dangerously-skip-permissions -p 'refactor this'" in full_cmd
 
 
@@ -1183,7 +1194,7 @@ def test_tmux_backend_opencode_skip_permissions_and_prompt(monkeypatch, tmp_path
 
     assert "spawned" in result
     new_session = next(c for c in run_calls if c[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     assert "trap \"" in full_cmd and "opencode --yolo -p 'fix the bug'" in full_cmd
 
 
@@ -1274,7 +1285,7 @@ def test_tmux_backend_hermes_chat_source_and_prompt(monkeypatch, tmp_path):
 
     assert "spawned" in result
     new_session = next(c for c in run_calls if c[:3] == ["tmux", "new-session", "-d"])
-    full_cmd = new_session[-1]
+    full_cmd = _resolve_tmux_cmd(new_session)
     # Verify: chat subcommand inserted, --yolo (skip_permissions), --source tool,
     # -q prompt, and NO --continue (which only resumes existing sessions)
     assert "hermes chat" in full_cmd
