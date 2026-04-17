@@ -332,25 +332,9 @@ class FileTaskStore(BaseTaskStore):
                 task = TaskItem.model_validate(data)
                 if completed_task_id in task.blocked_by:
                     task.blocked_by.remove(completed_task_id)
-                    was_blocked = task.status == TaskStatus.blocked
-                    if not task.blocked_by and was_blocked:
+                    if not task.blocked_by and task.status == TaskStatus.blocked:
                         task.status = TaskStatus.pending
-                        self._notify_unblock(task)
                     task.updated_at = _now_iso()
                     self._save_unlocked(task)
             except Exception:
                 continue
-
-    def _notify_unblock(self, task: TaskItem) -> None:
-        if not task.owner:
-            return
-        try:
-            from clawteam.team.mailbox import MailboxManager
-            mb = MailboxManager(self.team_name)
-            mb.send(
-                from_agent="system",
-                to=task.owner,
-                content=f"\u2705 Task unblocked: '{task.subject}'",
-            )
-        except Exception:
-            pass
