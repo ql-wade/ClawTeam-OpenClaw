@@ -2469,6 +2469,89 @@ def template_show(
     _output(data, _human)
 
 
+# ---------------------------------------------------------------------------
+# Phased pipeline controller launcher
+# ---------------------------------------------------------------------------
+
+def _start_phase_controller(
+    team_name: str,
+    template,
+    delayed_agents: list[tuple],
+    name_to_id: dict[str, str],
+    agent_ids: dict[str, str],
+    goal: str,
+    model_override: str | None,
+    model_strategy_override: str | None,
+    command_override: list[str] | None,
+    backend_name: str,
+) -> None:
+    import shutil
+    from clawteam.team.models import get_data_dir
+
+    data_dir = get_data_dir()
+    config_path = data_dir / "teams" / team_name / "phase-controller.json"
+
+    agents_cfg = []
+    for agent_def, spawn_after_name in delayed_agents:
+        agents_cfg.append({
+            "name": agent_def.name,
+            "spawn_after_task_name": spawn_after_name,
+            "agent_id": agent_ids[agent_def.name],
+            "task": agent_def.task,
+            "command": agent_def.command,
+            "type": agent_def.type,
+            "intent": agent_def.intent,
+            "end_state": agent_def.end_state,
+            "constraints": agent_def.constraints,
+            "retry_max": agent_def.retry.max_retries if agent_def.retry else 0,
+            "retry_backoff_base": agent_def.retry.backoff_base_seconds if agent_def.retry else 1.0,
+            "retry_backoff_max": agent_def.retry.backoff_max_seconds if agent_def.retry else 30.0,
+            "model": agent_def.model,
+            "model_tier": agent_def.model_tier,
+        })
+
+    payload = {
+        "team_name": team_name,
+        "leader_name": template.leader.name,
+        "agents": agents_cfg,
+        "goal": goal,
+        "model_override": model_override,
+        "model_strategy_override": model_strategy_override,
+        "command_override": command_override,
+        "backend_name": backend_name,
+        "workflow": template.workflow,
+        "name_to_id": name_to_id,
+        "poll_interval_seconds": template.workflow.get("poll_interval_seconds", 5),
+        "gate_timeout_seconds": template.workflow.get("gate_timeout_seconds", 3600),
+    }
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    python = sys.executable
+    controller_script = str(Path(__file__).resolve().parent.parent / "team" / "phase_controller.py")
+
+    session = f"clawteam-{team_name}"
+
+    has_tmux = shutil.which("tmux") is not None
+    if has_tmux:
+        import subprocess
+        subprocess.run(
+            ["tmux", "new-window", "-t", session, "-n", "phase-ctrl", "-d",
+             python, controller_script, team_name],
+            check=False,
+        )
+        console.print(f"[dim]PhaseController started in tmux pane: {session}:phase-ctrl[/dim]")
+    else:
+        import subprocess
+        subprocess.Popen(
+            [python, controller_script, team_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        console.print("[dim]PhaseController started as background process[/dim]")
+
+
 # ============================================================================
 # Launch Command
 # ============================================================================
@@ -2544,14 +2627,29 @@ def launch_team(
             user=_os.environ.get("CLAWTEAM_USER", ""),
         )
 
-    # 5. Create tasks
+    # 5. Create tasks (with optional blocked_by dependency chain)
     ts = TaskStore(t_name)
+    name_to_id: dict[str, str] = {}
     for task_def in tmpl.tasks:
-        ts.create(
+        task = ts.create(
             subject=task_def.subject,
             description=task_def.description,
             owner=task_def.owner,
         )
+        if task_def.task_name:
+            name_to_id[task_def.task_name] = task.id
+
+    # Resolve symbolic blocked_by references (task_name → real task ID)
+    if any(t.blocked_by for t in tmpl.tasks):
+        for task_def in tmpl.tasks:
+            if task_def.blocked_by and task_def.task_name:
+                real_ids = [
+                    name_to_id[ref]
+                    for ref in task_def.blocked_by
+                    if ref in name_to_id
+                ]
+                if real_ids:
+                    ts.update(name_to_id[task_def.task_name], add_blocked_by=real_ids)
 
     # 6. Get backend
     try:
@@ -2569,15 +2667,20 @@ def launch_team(
             console.print("[red]Not in a git repository. Use --repo or cd into a repo.[/red]")
             raise typer.Exit(1)
 
-    # 8. Spawn all agents (leader first, then workers)
-    # Load config once for model resolution (avoid re-reading per agent)
+    # 8. Spawn agents (phased: immediate agents first, delayed agents deferred)
     from clawteam.config import load_config as _load_config
     _model_cfg = _load_config()
 
     all_agents = [tmpl.leader] + list(tmpl.agents)
+    delayed_agents: list[tuple] = []  # (AgentDef, spawn_after_task_name)
     spawned: list[dict[str, str]] = []
 
     for agent in all_agents:
+        # --- Phased pipeline: defer agents with spawn_after ---
+        if agent.spawn_after:
+            delayed_agents.append((agent, agent.spawn_after))
+            continue
+
         a_id = agent_ids[agent.name]
         a_cmd = agent.command or cmd
 
@@ -2658,6 +2761,21 @@ def launch_team(
             result = be.spawn(**spawn_kwargs)
         spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
 
+    # 8b. Start PhaseController for delayed agents (if any)
+    if delayed_agents:
+        _start_phase_controller(
+            team_name=t_name,
+            template=tmpl,
+            delayed_agents=delayed_agents,
+            name_to_id=name_to_id,
+            agent_ids=agent_ids,
+            goal=goal,
+            model_override=model_override,
+            model_strategy_override=model_strategy_override,
+            command_override=command_override,
+            backend_name=be_name,
+        )
+
     # 9. Output summary
     out = {
         "status": "launched",
@@ -2677,6 +2795,15 @@ def launch_team(
             table.add_row(s["name"], s["type"], s["id"])
         console.print(table)
         console.print()
+        if delayed_agents:
+            delayed_table = Table(title="Delayed Agents (Phase Controller)")
+            delayed_table.add_column("Name", style="cyan")
+            delayed_table.add_column("Spawn After", style="yellow")
+            for agent_def, after_name in delayed_agents:
+                delayed_table.add_row(agent_def.name, after_name)
+            console.print(delayed_table)
+            console.print("[dim]These agents will be spawned automatically when their gating tasks complete.[/dim]")
+            console.print()
         if be_name == "tmux":
             console.print(f"[bold]Attach:[/bold] tmux attach -t clawteam-{t_name}")
         console.print(f"[bold]Board:[/bold]  clawteam board show {t_name}")

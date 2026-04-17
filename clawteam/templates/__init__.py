@@ -53,6 +53,8 @@ class AgentDef(BaseModel):
     retry: RetryConfig | None = None  # Retry with exponential backoff
     model: str | None = None  # Explicit model override for this agent
     model_tier: str | None = None  # "strong" | "balanced" | "cheap"
+    phase: str = ""  # Phase identifier (e.g. "A", "B", "C") — empty = spawn immediately
+    spawn_after: str = ""  # task_name that must complete before this agent is spawned
 
     @field_validator("model_tier")
     @classmethod
@@ -66,6 +68,9 @@ class TaskDef(BaseModel):
     subject: str
     description: str = ""
     owner: str = ""
+    task_name: str = ""  # Named anchor for symbolic blocked_by references
+    blocked_by: list[str] = []  # Symbolic references to other task_names
+    phase: str = ""  # Phase identifier
 
 
 class TemplateDef(BaseModel):
@@ -79,6 +84,7 @@ class TemplateDef(BaseModel):
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
     max_agents: int = DEFAULT_MAX_AGENTS  # Research-backed (arXiv:2512.08296)
+    workflow: dict = {}  # Parsed [workflow] section for phase-aware templates
 
     @field_validator("model_strategy")
     @classmethod
@@ -162,6 +168,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         agents=agents,
         tasks=tasks,
         max_agents=tmpl.get("max_agents", DEFAULT_MAX_AGENTS),
+        workflow=tmpl.get("workflow", {}),
     )
 
 

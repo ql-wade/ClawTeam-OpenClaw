@@ -1,0 +1,189 @@
+[template]
+name = "hive-dev"
+description = "Phased development pipeline: PRD → Gate1 → SDD → Gate2 → Code → Test → Review"
+command = ["openclaw"]
+backend = "tmux"
+
+# Phased pipeline configuration
+[template.workflow]
+poll_interval_seconds = 5
+gate_timeout_seconds = 3600
+
+# ---- Phase A: PRD Draft (spawns immediately) ----
+[template.leader]
+name = "pm"
+type = "product-manager"
+task = """You are the Product Manager. Draft a comprehensive PRD for: {goal}
+
+Your PRD must cover:
+1. Problem Statement & User Pain Points
+2. Proposed Solution & Key Features
+3. Success Metrics & KPIs  
+4. User Stories (with acceptance criteria)
+5. Non-functional Requirements
+6. Dependencies & Assumptions
+7. Risks & Mitigations
+
+Write the PRD as a markdown document. Use `clawteam inbox send {team_name} architect "PRD_READY: <brief summary>"` to signal completion.
+Then mark your task done: `clawteam task update {team_name} <your-task-id> --status completed`
+
+WAIT for human approval of the PRD before proceeding. Check your inbox for approval signals."""
+intent = "Produce a clear, actionable PRD that the team can execute on"
+end_state = "PRD approved by human stakeholder"
+phase = "A"
+
+# ---- Phase B: SDD (spawns after prd-approved gate) ----
+[[template.agents]]
+name = "architect"
+type = "architect"
+task = """You are the Solution Architect. Design the technical solution based on the approved PRD.
+Team goal: {goal}
+
+Receive the PRD from pm via inbox, then produce a Software Design Document covering:
+1. System Architecture (component diagram)
+2. Data Model & Storage Design
+3. API Design (endpoints, request/response schemas)
+4. Technology Stack & Rationale
+5. Implementation Plan (phased breakdown)
+6. Risk Analysis & Performance Considerations
+
+Use `clawteam inbox send {team_name} coder "SDD_READY: <brief summary>"` to signal completion.
+Then: `clawteam task update {team_name} <your-task-id> --status completed`
+
+WAIT for human approval of the SDD. Check your inbox for approval signals."""
+intent = "Produce a detailed technical design that coders can implement without ambiguity"
+end_state = "SDD approved by human stakeholder"
+phase = "B"
+spawn_after = "prd-approved"
+
+# ---- Phase C: Implementation (spawns after sdd-approved gate) ----
+[[template.agents]]
+name = "coder"
+type = "coder"
+task = """You are the Coder. Implement the feature based on the approved SDD.
+Team goal: {goal}
+
+Receive the SDD from architect via inbox, then:
+1. Follow TDD: write tests first, then implement
+2. Follow the architecture and API design from the SDD exactly
+3. Run tests locally to verify each component
+4. If tests fail, fix and re-run until ALL pass
+
+When implementation is complete:
+`clawteam inbox send {team_name} tester "IMPL_READY: <brief summary>"`
+`clawteam task update {team_name} <your-task-id> --status completed`"""
+intent = "Implement the feature following the SDD exactly, with TDD discipline"
+end_state = "All code implemented and unit tests passing"
+constraints = ["Follow TDD: test first, implement second", "Do not deviate from the SDD"]
+phase = "C"
+spawn_after = "sdd-approved"
+
+# ---- Phase D: Testing (spawns after implementation complete) ----
+[[template.agents]]
+name = "tester"
+type = "tester"
+task = """You are the Tester. Perform comprehensive testing of the implementation.
+Team goal: {goal}
+
+Receive implementation signal from coder via inbox, then:
+1. Review the SDD for test scenarios
+2. Run all existing tests — document results
+3. Write additional integration/E2E tests
+4. Test edge cases and error handling
+5. Verify all acceptance criteria from the PRD
+
+If bugs found: `clawteam inbox send {team_name} coder "BUG: <description>"` and WAIT for fix.
+Loop until all tests pass.
+
+When all tests pass:
+`clawteam inbox send {team_name} reviewer "TESTS_PASSED: <summary>"`
+`clawteam task update {team_name} <your-task-id> --status completed`"""
+intent = "Ensure the implementation is correct, complete, and meets all acceptance criteria"
+end_state = "All tests pass (unit + integration + edge cases)"
+phase = "D"
+spawn_after = "impl-complete"
+
+# ---- Phase E: Review (spawns after tests pass) ----
+[[template.agents]]
+name = "reviewer"
+type = "code-reviewer"
+task = """You are the Code Reviewer. Perform a final quality review.
+Team goal: {goal}
+
+Receive test results from tester via inbox, then review:
+1. Code quality: readability, naming, DRY, SOLID
+2. Architecture alignment: does the code match the SDD?
+3. Test coverage: are edge cases covered?
+4. Security: input validation, no secrets in code
+5. Performance: no obvious bottlenecks
+
+If issues found: `clawteam inbox send {team_name} coder "REVIEW_ISSUE: <details>"` and WAIT for fix.
+
+When review passes:
+`clawteam inbox send {team_name} pm "REVIEW_PASSED: Feature ready for release"`
+`clawteam task update {team_name} <your-task-id> --status completed`"""
+intent = "Final quality gate — ensure production-readiness"
+end_state = "Code reviewed and approved for release"
+phase = "E"
+spawn_after = "test-complete"
+
+# ---- Task Dependency Chain ----
+# Phase A tasks (no dependencies — created immediately)
+[[template.tasks]]
+subject = "Draft PRD"
+description = "Product Manager drafts the Product Requirements Document"
+owner = "pm"
+task_name = "prd-draft"
+phase = "A"
+
+[[template.tasks]]
+subject = "Human Review: PRD"
+description = "Human reviews and approves the PRD — GATE 1"
+owner = "pm"
+task_name = "prd-approved"
+blocked_by = ["prd-draft"]
+phase = "A-gate"
+
+# Phase B tasks
+[[template.tasks]]
+subject = "Design SDD"
+description = "Architect designs Software Design Document based on approved PRD"
+owner = "architect"
+task_name = "sdd-design"
+blocked_by = ["prd-approved"]
+phase = "B"
+
+[[template.tasks]]
+subject = "Human Review: SDD"
+description = "Human reviews and approves the SDD — GATE 2"
+owner = "architect"
+task_name = "sdd-approved"
+blocked_by = ["sdd-design"]
+phase = "B-gate"
+
+# Phase C tasks
+[[template.tasks]]
+subject = "Implement Feature"
+description = "Coder implements the feature following TDD"
+owner = "coder"
+task_name = "impl-complete"
+blocked_by = ["sdd-approved"]
+phase = "C"
+
+# Phase D tasks
+[[template.tasks]]
+subject = "Test & QA"
+description = "Tester runs all tests, reports bugs, loops until all pass"
+owner = "tester"
+task_name = "test-complete"
+blocked_by = ["impl-complete"]
+phase = "D"
+
+# Phase E tasks
+[[template.tasks]]
+subject = "Code Review"
+description = "Reviewer performs final quality review"
+owner = "reviewer"
+task_name = "review-complete"
+blocked_by = ["test-complete"]
+phase = "E"
