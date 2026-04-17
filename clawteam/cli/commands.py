@@ -2020,6 +2020,24 @@ def spawn_agent(
             workspace_branch=ws_branch,
             memory_scope=f"custom:team-{_team}",
         )
+    elif team and agent_name:
+        from clawteam.paths import validate_identifier as _vid
+
+        _dp = (
+            Path.home() / ".clawteam" / "teams"
+            / _vid(team, "team name")
+            / "deferred_prompts"
+            / f"{agent_name}.json"
+        )
+        if _dp.is_file():
+            _dc = json.loads(_dp.read_text(encoding="utf-8"))
+            prompt = _dc.get("prompt")
+            if _dc.get("command") and not command:
+                command = _dc["command"]
+            if _dc.get("model") and not model:
+                model = _dc["model"]
+            if _dc.get("agent_type") and agent_type == "general-purpose":
+                agent_type = _dc["agent_type"]
 
     # Session resume: inject --resume flag for claude commands
     if resume:
@@ -2583,6 +2601,8 @@ def launch_team(
 
     # Load config once for model resolution
     from clawteam.config import load_config as _load_config
+    from clawteam.fileutil import atomic_write_text
+    from clawteam.paths import validate_identifier as validate_identifier
     _model_cfg = _load_config()
 
     spawned: list[dict[str, str]] = []
@@ -2671,13 +2691,68 @@ def launch_team(
         spawned.append(result)
 
     # Register deferred agents info for Kev to spawn later
+    # Pre-render and persist each deferred agent's prompt + config so
+    # ``clawteam spawn --team X --agent-name Y`` can auto-inject them.
+    _deferred_prompts_dir = (
+        Path.home() / ".clawteam" / "teams"
+        / validate_identifier(t_name, "team name")
+        / "deferred_prompts"
+    )
     for agent in deferred_agents:
+        # Render the full prompt (same as _spawn_single_agent does)
+        a_cmd_deferred = agent.command or cmd
+        rendered_deferred = render_task(
+            agent.task,
+            goal=goal,
+            team_name=t_name,
+            agent_name=agent.name,
+        )
+        prompt_deferred = build_agent_prompt(
+            agent_name=agent.name,
+            agent_id=agent_ids[agent.name],
+            agent_type=agent.type,
+            team_name=t_name,
+            leader_name=tmpl.leader.name,
+            task=rendered_deferred,
+            user=_os.environ.get("CLAWTEAM_USER", ""),
+            workspace_dir="",  # resolved at spawn time
+            workspace_branch="",
+            memory_scope=f"custom:team-{t_name}",
+            intent=agent.intent or "",
+            end_state=agent.end_state or "",
+            constraints=agent.constraints,
+            team_size=len(all_agents),
+        )
+        resolved_model_deferred = resolve_model(
+            cli_model=model_override,
+            agent_model=agent.model,
+            agent_model_tier=agent.model_tier,
+            template_model_strategy=model_strategy_override or tmpl.model_strategy,
+            template_model=tmpl.model,
+            config_default_model=_model_cfg.default_model,
+            agent_type=agent.type,
+            tier_overrides=_model_cfg.model_tiers or None,
+        )
+
+        # Persist prompt + config to JSON
+        _deferred_prompts_dir.mkdir(parents=True, exist_ok=True)
+        _dp_file = _deferred_prompts_dir / f"{agent.name}.json"
+        atomic_write_text(
+            _dp_file,
+            json.dumps({
+                "prompt": prompt_deferred,
+                "command": a_cmd_deferred,
+                "model": resolved_model_deferred,
+                "agent_type": agent.type,
+            }),
+        )
+
         deferred_list.append({
             "name": agent.name,
             "id": agent_ids[agent.name],
             "type": agent.type,
-            "spawn_after": agent.spawn_after,
-            "phase": getattr(agent, 'phase', ''),
+            "spawn_after": agent.spawn_after or "",
+            "phase": getattr(agent, 'phase', '') or "",
         })
 
     # 9. Output summary
