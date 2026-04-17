@@ -2544,14 +2544,18 @@ def launch_team(
             user=_os.environ.get("CLAWTEAM_USER", ""),
         )
 
-    # 5. Create tasks
+    # 5. Create tasks (with dependency chain support)
     ts = TaskStore(t_name)
+    task_id_map: dict[str, str] = {}
     for task_def in tmpl.tasks:
-        ts.create(
+        task = ts.create(
             subject=task_def.subject,
             description=task_def.description,
             owner=task_def.owner,
+            blocked_by=[task_id_map[b] for b in task_def.blocked_by if b in task_id_map] if hasattr(task_def, 'blocked_by') else None,
         )
+        if hasattr(task_def, 'task_name') and task_def.task_name:
+            task_id_map[task_def.task_name] = task.id
 
     # 6. Get backend
     try:
@@ -2569,19 +2573,24 @@ def launch_team(
             console.print("[red]Not in a git repository. Use --repo or cd into a repo.[/red]")
             raise typer.Exit(1)
 
-    # 8. Spawn all agents (leader first, then workers)
-    # Load config once for model resolution (avoid re-reading per agent)
+    # 8. Spawn agents — phased pipeline support
+    # Split agents into immediate vs deferred based on spawn_after field
+    all_agents = [tmpl.leader] + list(tmpl.agents)
+    immediate_agents = [a for a in all_agents if not getattr(a, 'spawn_after', None) or getattr(a, 'spawn_after', None) == 'immediate']
+    deferred_agents = [a for a in all_agents if getattr(a, 'spawn_after', None) and getattr(a, 'spawn_after', None) != 'immediate']
+
+    # Load config once for model resolution
     from clawteam.config import load_config as _load_config
     _model_cfg = _load_config()
 
-    all_agents = [tmpl.leader] + list(tmpl.agents)
     spawned: list[dict[str, str]] = []
+    deferred_list: list[dict[str, str]] = []
 
-    for agent in all_agents:
+    def _spawn_single_agent(agent, agent_ids, all_agents_count):
+        """Spawn a single agent with full configuration."""
         a_id = agent_ids[agent.name]
         a_cmd = agent.command or cmd
 
-        # Variable substitution
         rendered = render_task(
             agent.task,
             goal=goal,
@@ -2589,7 +2598,6 @@ def launch_team(
             agent_name=agent.name,
         )
 
-        # Workspace
         cwd = None
         ws_branch = ""
         if ws_mgr:
@@ -2599,7 +2607,6 @@ def launch_team(
             cwd = _workspace_cwd_from_info(repo, ws_info)
             ws_branch = ws_info.branch_name
 
-        # Build prompt
         prompt = build_agent_prompt(
             agent_name=agent.name,
             agent_id=a_id,
@@ -2614,15 +2621,13 @@ def launch_team(
             intent=agent.intent or "",
             end_state=agent.end_state or "",
             constraints=agent.constraints,
-            team_size=len(all_agents),
+            team_size=all_agents_count,
         )
 
-        # Resolve skip_permissions from config
         from clawteam.config import get_effective
         sp_val, _ = get_effective("skip_permissions")
         _skip = str(sp_val).lower() not in ("false", "0", "no", "")
 
-        # Resolve model for this agent (CLI override > agent > tier > strategy > template > config)
         resolved_model = resolve_model(
             cli_model=model_override,
             agent_model=agent.model,
@@ -2656,7 +2661,22 @@ def launch_team(
             )
         else:
             result = be.spawn(**spawn_kwargs)
-        spawned.append({"name": agent.name, "id": a_id, "type": agent.type, "result": result})
+        return {"name": agent.name, "id": a_id, "type": agent.type, "result": result}
+
+    # Spawn immediate agents (leader + phase A workers)
+    for agent in immediate_agents:
+        result = _spawn_single_agent(agent, agent_ids, len(all_agents))
+        spawned.append(result)
+
+    # Register deferred agents info for Kev to spawn later
+    for agent in deferred_agents:
+        deferred_list.append({
+            "name": agent.name,
+            "id": agent_ids[agent.name],
+            "type": agent.type,
+            "spawn_after": agent.spawn_after,
+            "phase": getattr(agent, 'phase', ''),
+        })
 
     # 9. Output summary
     out = {
@@ -2665,17 +2685,32 @@ def launch_team(
         "template": tmpl.name,
         "backend": be_name,
         "agents": [{"name": s["name"], "id": s["id"], "type": s["type"]} for s in spawned],
+        "deferred_agents": deferred_list if deferred_list else None,
     }
 
     def _human(_data):
         console.print(f"\n[green bold]Team '{t_name}' launched from template '{tmpl.name}'[/green bold]\n")
-        table = Table(title="Agents")
+        table = Table(title="Spawned Agents (Immediate)")
         table.add_column("Name", style="cyan")
         table.add_column("Type")
         table.add_column("ID", style="dim")
         for s in spawned:
             table.add_row(s["name"], s["type"], s["id"])
         console.print(table)
+
+        if deferred_list:
+            console.print()
+            table2 = Table(title="Deferred Agents (spawn after gate)")
+            table2.add_column("Name", style="yellow")
+            table2.add_column("Type")
+            table2.add_column("Phase")
+            table2.add_column("Spawn After", style="dim")
+            for d in deferred_list:
+                table2.add_row(d["name"], d["type"], d.get("phase", ""), d["spawn_after"])
+            console.print(table2)
+            console.print()
+            console.print("[dim]Deferred agents will be spawned by Kev when gates pass.[/dim]")
+
         console.print()
         if be_name == "tmux":
             console.print(f"[bold]Attach:[/bold] tmux attach -t clawteam-{t_name}")

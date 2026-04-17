@@ -41,6 +41,14 @@ class RetryConfig(BaseModel):
     backoff_max_seconds: float = 30.0
 
 
+class WorkflowDef(BaseModel):
+    """Phased pipeline workflow configuration."""
+    poll_interval_seconds: int = 5
+    gate_timeout_seconds: int = 3600
+    max_retry_count: int = 2
+    rollback_on_failure: bool = False
+
+
 class AgentDef(BaseModel):
     name: str
     type: str = "general-purpose"
@@ -53,6 +61,9 @@ class AgentDef(BaseModel):
     retry: RetryConfig | None = None  # Retry with exponential backoff
     model: str | None = None  # Explicit model override for this agent
     model_tier: str | None = None  # "strong" | "balanced" | "cheap"
+    # Phased pipeline fields
+    phase: str | None = None  # Phase identifier (A, B, C, etc.)
+    spawn_after: str | None = None  # Task name to wait for before spawning
 
     @field_validator("model_tier")
     @classmethod
@@ -66,6 +77,10 @@ class TaskDef(BaseModel):
     subject: str
     description: str = ""
     owner: str = ""
+    # Phased pipeline fields
+    task_name: str | None = None  # Unique identifier for dependency chains
+    blocked_by: list[str] = []  # Task names this task depends on
+    phase: str | None = None  # Phase identifier
 
 
 class TemplateDef(BaseModel):
@@ -79,6 +94,8 @@ class TemplateDef(BaseModel):
     agents: list[AgentDef] = []
     tasks: list[TaskDef] = []
     max_agents: int = DEFAULT_MAX_AGENTS  # Research-backed (arXiv:2512.08296)
+    # Phased pipeline configuration
+    workflow: WorkflowDef | None = None
 
     @field_validator("model_strategy")
     @classmethod
@@ -151,6 +168,9 @@ def _parse_toml(path: Path) -> TemplateDef:
     # Parse tasks
     tasks = [TaskDef(**t) for t in tmpl.get("tasks", [])]
 
+    workflow_data = tmpl.get("workflow")
+    workflow = WorkflowDef(**workflow_data) if workflow_data else None
+
     return TemplateDef(
         name=tmpl.get("name", path.stem),
         description=tmpl.get("description", ""),
@@ -162,6 +182,7 @@ def _parse_toml(path: Path) -> TemplateDef:
         agents=agents,
         tasks=tasks,
         max_agents=tmpl.get("max_agents", DEFAULT_MAX_AGENTS),
+        workflow=workflow,
     )
 
 
