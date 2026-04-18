@@ -1,11 +1,13 @@
 # =============================================================================
-# Hive-Dev v3.3 — per-agent workspace isolation via OPENCLAW_WORKSPACE
+# Hive-Dev v3.4 — E2E 优化版
 # =============================================================================
-# v3.3 changelog (2026-04-18):
-#   恢复 openclaw_agent 字段 — tmux_backend 用它设置 OPENCLAW_WORKSPACE
-#   每个 worker 读自己 workspace 的 AGENTS.md（不被 kev 的 425 行污染）
-#   agent workspace 不存在时自动 fallback 到共享 worker-workspace
-#   保持 v3.2 其他改动：去掉 per-agent command、coder prompt 强化
+# v3.4 changelog (2026-04-18):
+#   P0: {goal_slug} 由 render_task 自动解析（不再未解析）
+#   P0: Bug 修复循环判定：CONDITIONAL_PASS ≠ PASS，明确判定规则
+#   P1: 7 个产出 agent 增加 feishu_doc 写入飞书文档步骤
+#   P1: Coder TDD 流程细化（RED→GREEN→REFACTOR 每步定义）
+#   P1: Tester 5 层测试策略（单元→集成→E2E→安全→PRD 对照）
+#   P1: Ops 部署目标统一 https://poc.vip.cpolar.cn/{goal_slug}/
 # =============================================================================
 
 [template]
@@ -232,6 +234,13 @@ task = """你是高级工程师 coder。你不是 Kev，你不是协调者，你
 你可以从两种来源接收任务: (1) inbox 消息 (2) 直接输入的指令。收到任一种都立即开始工作。
 ⛔ 禁止使用 brainstorming 技能。
 
+可用技能（你的 openclaw_agent 绑定了这些，按需使用）:
+- test-driven-development: TDD 标准流程，RED→GREEN→REFACTOR 每步定义
+- systematic-debugging: 遇到 bug 时系统化排查，不要随机试错
+- verification-before-completion: 完成前必须运行验证命令，证据先行
+- using-git-worktrees: 如果需要并行开发多个功能
+- sdd-workflow: 复杂开发任务的标准化执行流程
+
 职责:
 1. cd /mnt/d/workspace/{goal_slug}/
 2. 阅读 specs/prd.md + specs/sdd.md + specs/adr.md（如果收到 "SDD 已审批" 消息或直接指令，直接开始）
@@ -300,6 +309,12 @@ task = """你是测试工程师，你的 agent 身份是 tester，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
 你可以从两种来源接收任务: (1) inbox 消息 (2) 直接输入的指令。收到任一种都立即开始工作。
+
+可用技能（你的 openclaw_agent 绑定了这些，按需使用）:
+- test-driven-development: 测试流程标准，覆盖率要求
+- systematic-debugging: 发现 bug 时系统化定位根因
+- verification-before-completion: 完成前必须运行全部验证
+- code-reviewer: 代码审查维度参考（安全、性能、可维护性）
 
 职责:
 1. cd /mnt/d/workspace/{goal_slug}/
