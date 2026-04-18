@@ -2038,6 +2038,8 @@ def spawn_agent(
                 model = _dc["model"]
             if _dc.get("agent_type") and agent_type == "general-purpose":
                 agent_type = _dc["agent_type"]
+            if _dc.get("openclaw_agent") and not openclaw_agent:
+                openclaw_agent = _dc["openclaw_agent"]
 
     # Session resume: inject --resume flag for claude commands
     if resume:
@@ -2683,6 +2685,7 @@ def launch_team(
             cwd=cwd,
             skip_permissions=_skip,
             model=resolved_model,
+            openclaw_agent=agent.openclaw_agent,
         )
         if agent.retry:
             from clawteam.spawn import spawn_with_retry
@@ -2756,6 +2759,7 @@ def launch_team(
                 "command": a_cmd_deferred,
                 "model": resolved_model_deferred,
                 "agent_type": agent.type,
+                "openclaw_agent": agent.openclaw_agent,
             }),
         )
 

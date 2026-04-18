@@ -64,6 +64,7 @@ class AgentDef(BaseModel):
     # Phased pipeline fields
     phase: str | None = None  # Phase identifier (A, B, C, etc.)
     spawn_after: str | None = None  # Task name to wait for before spawning
+    openclaw_agent: str | None = None  # OpenClaw agent id → OPENCLAW_WORKSPACE isolation
 
     @field_validator("model_tier")
     @classmethod
