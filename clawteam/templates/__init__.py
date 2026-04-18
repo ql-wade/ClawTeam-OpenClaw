@@ -143,8 +143,22 @@ class _SafeDict(dict):
         return "{" + key + "}"
 
 
+def _slugify(text: str) -> str:
+    """Convert text to a filesystem-safe slug (lowercase, spaces→hyphens, alphanumeric only).
+
+    Examples: "3D Snake Game" → "3d-snake-game", "Hello World!" → "hello-world"
+    """
+    import re as _re
+    return _re.sub(r"[^a-z0-9-]", "", _re.sub(r"[\s_]+", "-", text.lower())).strip("-")
+
+
 def render_task(task: str, **variables: str) -> str:
-    """Replace {goal}, {team_name}, {agent_name} etc. in task text."""
+    """Replace {goal}, {team_name}, {agent_name}, {goal_slug} etc. in task text.
+
+    {goal_slug} is auto-derived from {goal} via slugification if not explicitly provided.
+    """
+    if "goal" in variables and "goal_slug" not in variables:
+        variables = {**variables, "goal_slug": _slugify(variables["goal"])}
     return task.format_map(_SafeDict(**variables))
 
 
