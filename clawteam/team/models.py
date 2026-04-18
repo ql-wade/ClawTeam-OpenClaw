@@ -86,6 +86,7 @@ class TeamConfig(BaseModel):
     created_at: str = Field(default_factory=_now_iso, alias="createdAt")
     members: list[TeamMember] = Field(default_factory=list)
     budget_cents: float = Field(default=0.0, alias="budgetCents")
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TeamMessage(BaseModel):

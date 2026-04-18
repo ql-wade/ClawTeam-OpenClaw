@@ -2504,6 +2504,7 @@ def launch_team(
     force: bool = typer.Option(False, "--force", "-f", help="Suppress max-agent warnings"),
     model_override: Optional[str] = typer.Option(None, "--model", help="Override model for ALL agents"),
     model_strategy_override: Optional[str] = typer.Option(None, "--model-strategy", help="Model strategy: auto | none"),
+    metadata_json: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to persist in config.json (e.g. notify_target, initiated_by)"),
 ):
     """Launch a full agent team from a template with one command."""
     import os as _os
@@ -2537,7 +2538,17 @@ def launch_team(
     be_name = normalize_backend_name(backend or tmpl.backend)
     cmd = command_override or tmpl.command
 
-    # 3. Create team
+    _team_metadata: dict = {}
+    if metadata_json:
+        try:
+            _team_metadata = json.loads(metadata_json)
+            if not isinstance(_team_metadata, dict):
+                console.print("[red]--metadata must be a JSON object[/red]")
+                raise typer.Exit(1)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Invalid --metadata JSON: {e}[/red]")
+            raise typer.Exit(1)
+
     leader_id = uuid.uuid4().hex[:12]
     try:
         TeamManager.create_team(
@@ -2546,6 +2557,7 @@ def launch_team(
             leader_id=leader_id,
             description=tmpl.description,
             user=_os.environ.get("CLAWTEAM_USER", ""),
+            metadata=_team_metadata,
         )
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")

@@ -76,6 +76,7 @@ class TeamManager:
         leader_id: str,
         description: str = "",
         user: str = "",
+        metadata: dict | None = None,
     ) -> TeamConfig:
         validate_identifier(name, "team name")
         validate_identifier(leader_name, "leader name")
@@ -94,6 +95,7 @@ class TeamManager:
             description=description,
             lead_agent_id=leader_id,
             members=[leader],
+            metadata=metadata or {},
         )
         _save_config(config)
         # Create inboxes dir and leader inbox
