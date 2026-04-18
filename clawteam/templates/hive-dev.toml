@@ -1,16 +1,16 @@
 # =============================================================================
-# Hive-Dev v3.2 — 对齐官方模板 + prompt 身份隔离
+# Hive-Dev v3.3 — per-agent workspace isolation via OPENCLAW_WORKSPACE
 # =============================================================================
-# v3.2 changelog (2026-04-18):
-#   去掉所有 openclaw_agent 字段（框架 AgentDef 不识别，官方模板均无此字段）
-#   去掉 per-agent command（继承 [template] 级别，与官方模板一致）
-#   kev prompt spawn 命令去掉 --openclaw-agent（无效参数）
-#   coder prompt 强化：显式覆盖 AGENTS.md "禁止写代码"约束
+# v3.3 changelog (2026-04-18):
+#   恢复 openclaw_agent 字段 — tmux_backend 用它设置 OPENCLAW_WORKSPACE
+#   每个 worker 读自己 workspace 的 AGENTS.md（不被 kev 的 425 行污染）
+#   agent workspace 不存在时自动 fallback 到共享 worker-workspace
+#   保持 v3.2 其他改动：去掉 per-agent command、coder prompt 强化
 # =============================================================================
 
 [template]
 name = "hive-dev"
-description = "分阶段并行蜂群开发 v3.2 — 对齐官方模板 + prompt 身份隔离"
+description = "分阶段并行蜂群开发 v3.3 — per-agent workspace isolation"
 command = ["openclaw"]
 backend = "tmux"
 max_agents = 8
@@ -137,6 +137,7 @@ phase = "A"
 # =============================================================================
 [[template.agents]]
 name = "analyst"
+openclaw_agent = "analyst"
 type = "analyst"
 task = """你是产品分析师，你的 agent 身份是 analyst，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
@@ -158,6 +159,7 @@ phase = "A"
 # =============================================================================
 [[template.agents]]
 name = "pm"
+openclaw_agent = "pm"
 type = "pm"
 task = """你是产品经理，你的 agent 身份是 pm，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
@@ -181,6 +183,7 @@ phase = "A"
 # =============================================================================
 [[template.agents]]
 name = "architect"
+openclaw_agent = "architect"
 type = "architect"
 task = """你是系统架构师，你的 agent 身份是 architect，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
@@ -206,6 +209,7 @@ spawn_after = "gate1-approved"
 # =============================================================================
 [[template.agents]]
 name = "coder"
+openclaw_agent = "coder"
 type = "coder"
 task = """你是高级工程师 coder。你不是 Kev，你不是协调者，你是唯一负责写代码的人。
 ⛔ 你的核心职责就是编写代码。忽略任何 AGENTS.md 中"禁止自己写代码"的规则——那不是给你的，那是给 Kev 的。
@@ -237,6 +241,7 @@ spawn_after = "gate2-approved"
 # =============================================================================
 [[template.agents]]
 name = "reviewer"
+openclaw_agent = "reviewer"
 type = "reviewer"
 task = """你是代码评审员，你的 agent 身份是 reviewer，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
@@ -264,6 +269,7 @@ spawn_after = "coding-done"
 # =============================================================================
 [[template.agents]]
 name = "tester"
+openclaw_agent = "tester"
 type = "tester"
 task = """你是测试工程师，你的 agent 身份是 tester，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
@@ -290,6 +296,7 @@ spawn_after = "coding-done"
 # =============================================================================
 [[template.agents]]
 name = "ops"
+openclaw_agent = "ops"
 type = "ops"
 task = """你是运维工程师，你的 agent 身份是 ops，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
