@@ -12,7 +12,7 @@
 
 [template]
 name = "hive-dev"
-description = "分阶段并行蜂群开发 v3.3 — per-agent workspace isolation"
+description = "分阶段并行蜂群开发 v3.4 — E2E 优化：goal_slug 解析 + 飞书文档 + 技能强化 + cpolar 部署"
 command = ["openclaw"]
 backend = "tmux"
 max_agents = 8
@@ -202,12 +202,18 @@ task = """你是系统架构师，你的 agent 身份是 architect，不是 Kev�
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
 你可以从两种来源接收任务: (1) inbox 消息 (2) 直接输入的指令。收到任一种都立即开始工作。
-⛔ 禁止使用 brainstorming 技能（会进入交互问答模式导致卡死）。
+ ⛔ 禁止使用 brainstorming 技能（会进入交互问答模式导致卡死）。
 
-职责:
-1. cd /mnt/d/workspace/{goal_slug}/
-2. 阅读 specs/prd.md（如果收到 "PRD 已审批" 消息或直接指令，直接开始）
-3. 使用 architecture-design + architecture-decision-records 技能撰写:
+ 可用技能（你的 openclaw_agent 绑定了这些，按需使用）:
+ - architecture-design: 系统架构设计，ATAM 决策分析 + 技术选型矩阵
+ - architecture-decision-records: 捕获架构决策，记录 context/option/consequence
+ - writing-plans: 多步骤任务拆解为结构化实现计划
+ - self-improving: 完成后反思改进
+
+ 职责:
+ 1. cd /mnt/d/workspace/{goal_slug}/
+ 2. 阅读 specs/prd.md（如果收到 "PRD 已审批" 消息或直接指令，直接开始）
+ 3. 使用上述技能撰写:
    - specs/sdd.md: 技术栈选型（含选型矩阵）、ATAM 分析、目录结构（精确到文件）、API 设计、数据模型、部署架构。不少于 300 行。
    - specs/adr.md: 每个重大决策一条 ADR（context/option/consequence）。不少于 5 条。
 4. 📄 写入飞书文档:
