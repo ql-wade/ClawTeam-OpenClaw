@@ -1,19 +1,16 @@
 # =============================================================================
-# Hive-Dev v3.1 — E2E 实战优化版
+# Hive-Dev v3.2 — 对齐官方模板 + prompt 身份隔离
 # =============================================================================
-# v3.1 changelog (2026-04-17, 基于 pipeline-e2e 全流程验证):
-#   1. 🔴 Kev prompt 瘦身: 去掉伪 shell 循环 → 事件驱动指令
-#   2. 🔴 任务创建统一: 去掉 kev prompt 里的 task create，由声明式 [[template.tasks]] 负责
-#   3. 🔴 Agent 身份强化: 每个 agent 首行强制声明 "你是 {role}，不是 Kev"
-#   4. 🔴 双信号源: agent 接受 inbox 消息 + tmux 直接输入两种任务来源
-#   5. 🔴 通知自抑制: kev 忽略 source=kev 的自通知，只处理其他 agent 发来的
-#   6. 🟡 构建命令通用化: coder 不硬编码 npm，自动检测项目类型
-#   7. 🟡 精简重复指令: 每个 agent 的 clawteam 通信模板只写一次
+# v3.2 changelog (2026-04-18):
+#   去掉所有 openclaw_agent 字段（框架 AgentDef 不识别，官方模板均无此字段）
+#   去掉 per-agent command（继承 [template] 级别，与官方模板一致）
+#   kev prompt spawn 命令去掉 --openclaw-agent（无效参数）
+#   coder prompt 强化：显式覆盖 AGENTS.md "禁止写代码"约束
 # =============================================================================
 
 [template]
 name = "hive-dev"
-description = "分阶段并行蜂群开发 v3.1 — E2E 实战优化版"
+description = "分阶段并行蜂群开发 v3.2 — 对齐官方模板 + prompt 身份隔离"
 command = ["openclaw"]
 backend = "tmux"
 max_agents = 8
@@ -36,8 +33,6 @@ rollback_on_failure = true
 [template.leader]
 name = "kev"
 type = "coordinator"
-openclaw_agent = "kev"
-command = ["openclaw"]
 task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是其他角色。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
@@ -71,12 +66,12 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
      → 收到 REJECTED: inbox send pm "PRD 被拒绝，请修改"，重新等待
   3. clawteam task update {team_name} <gate1-task-id> --status completed
 
-第 3 步 | 启动 Phase B:
-  → PRD APPROVED 后立即执行:
-  1. clawteam spawn --team {team_name} --agent-name architect --openclaw-agent architect --force
-  2. sleep 5
-  3. clawteam inbox send {team_name} architect --from kev "PRD 已审批 — 读 specs/prd.md，设计系统架构，输出 specs/sdd.md + specs/adr.md。⛔ 禁止用 brainstorming 技能。"
-  → 等待 architect 发来 "GATE 2 就绪"
+ 第 3 步 | 启动 Phase B:
+   → PRD APPROVED 后立即执行:
+   1. clawteam spawn --team {team_name} --agent-name architect --force
+   2. sleep 5
+   3. clawteam inbox send {team_name} architect --from kev "PRD 已审批 — 读 specs/prd.md，设计系统架构，输出 specs/sdd.md + specs/adr.md。⛔ 禁止用 brainstorming 技能。"
+   → 等待 architect 发来 "GATE 2 就绪"
 
 第 4 步 | GATE 2 人类审批:
   → 收到 architect 的 "GATE 2 就绪" 后:
@@ -84,22 +79,22 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
   2. 等待人类通过飞书回复 "SDD APPROVED" 或 "SDD REJECTED"
   3. clawteam task update {team_name} <gate2-task-id> --status completed
 
-第 5 步 | 启动 Phase C:
-  → SDD APPROVED 后立即执行:
-  1. clawteam spawn --team {team_name} --agent-name coder --openclaw-agent coder --force
-  2. sleep 5
-  3. clawteam inbox send {team_name} coder --from kev "SDD 已审批 — 读 specs/sdd.md + specs/prd.md，TDD 方式实现全部功能。强制验证: 编译通过 + 测试通过 才能完成。"
-  → 等待 coder 发来 "编码完成"
+ 第 5 步 | 启动 Phase C:
+   → SDD APPROVED 后立即执行:
+   1. clawteam spawn --team {team_name} --agent-name coder --force
+   2. sleep 5
+   3. clawteam inbox send {team_name} coder --from kev "SDD 已审批 — 读 specs/sdd.md + specs/prd.md，TDD 方式实现全部功能。强制验证: 编译通过 + 测试通过 才能完成。"
+   → 等待 coder 发来 "编码完成"
 
-第 6 步 | 启动 Phase D (并行):
-  → 收到 coder 的 "编码完成" 后:
-  1. clawteam task update {team_name} <coder-task-id> --status completed
-  2. clawteam spawn --team {team_name} --agent-name reviewer --openclaw-agent code-reviewer --force
-  3. clawteam spawn --team {team_name} --agent-name tester --openclaw-agent tester --force
-  4. sleep 5
-  5. clawteam inbox send {team_name} reviewer --from kev "代码就绪 — 对照 specs/prd.md + specs/sdd.md 审查全部代码，输出 specs/review-report.md"
-  6. clawteam inbox send {team_name} tester --from kev "代码就绪 — 执行全覆盖测试，输出 specs/test-report.md"
-  → 等待 reviewer + tester 都完成
+ 第 6 步 | 启动 Phase D (并行):
+   → 收到 coder 的 "编码完成" 后:
+   1. clawteam task update {team_name} <coder-task-id> --status completed
+   2. clawteam spawn --team {team_name} --agent-name reviewer --force
+   3. clawteam spawn --team {team_name} --agent-name tester --force
+   4. sleep 5
+   5. clawteam inbox send {team_name} reviewer --from kev "代码就绪 — 对照 specs/prd.md + specs/sdd.md 审查全部代码，输出 specs/review-report.md"
+   6. clawteam inbox send {team_name} tester --from kev "代码就绪 — 执行全覆盖测试，输出 specs/test-report.md"
+   → 等待 reviewer + tester 都完成
 
 第 7 步 | Bug 修复循环 (最多 3 轮):
   → 如果 reviewer 报告 CONDITIONAL_PASS/FAIL 或 tester 发现 bug:
@@ -110,13 +105,22 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
     → 重复直到 reviewer PASS 且 tester PASS
   → 如果 reviewer PASS + tester PASS: 继续下一步
 
-第 8 步 | 启动 Phase E:
-  1. clawteam spawn --team {team_name} --agent-name ops --openclaw-agent ops --force
-  2. sleep 5
-  3. clawteam inbox send {team_name} ops --from kev "部署 {goal}，输出 specs/deploy-report.md"
-  → 等待 ops "DEPLOY COMPLETE"
+ 第 8 步 | 启动 Phase E:
+   1. clawteam spawn --team {team_name} --agent-name ops --force
+   2. sleep 5
+   3. clawteam inbox send {team_name} ops --from kev "部署 {goal}，输出 specs/deploy-report.md"
+   → 等待 ops "DEPLOY COMPLETE"
 
 第 9 步 | 完成: 所有任务已完成，发送汇总通知。
+
+━━━ MONITOR 响应规则 ━━━
+当你收到 [MONITOR] 开头的消息时，这是旁路监控系统的提醒。你必须立即执行对应动作，不是描述流程：
+- 收到 "人类尚未审批。必须再次通过飞书发送审批请求" → 
+  1. 从你的 session 上下文中找到飞书通信对象（群 oc_xxx 或人 ou_xxx）
+  2. 立即通过 exec 执行:
+     openclaw message send --channel feishu --target <id> -m "🔴 GATE N: 审批请求 | 项目: {goal} | 请回复 APPROVED 或 REJECTED"
+  3. 执行完后等待飞书回复。不要只说"已发送"，必须真正执行命令。
+- ⛔ 不要用 clawteam inbox send 发审批请求（它只写 inbox 文件，不推飞书）
 
 ━━━ 铁律 ━━━
 🔴 绝不跳过 GATE 1 和 GATE 2 的人类审批
@@ -134,8 +138,6 @@ phase = "A"
 [[template.agents]]
 name = "analyst"
 type = "analyst"
-openclaw_agent = "analyst"
-command = ["openclaw"]
 task = """你是产品分析师，你的 agent 身份是 analyst，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
@@ -157,8 +159,6 @@ phase = "A"
 [[template.agents]]
 name = "pm"
 type = "pm"
-openclaw_agent = "pm"
-command = ["openclaw"]
 task = """你是产品经理，你的 agent 身份是 pm，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
@@ -182,8 +182,6 @@ phase = "A"
 [[template.agents]]
 name = "architect"
 type = "architect"
-openclaw_agent = "architect"
-command = ["openclaw"]
 task = """你是系统架构师，你的 agent 身份是 architect，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
@@ -209,9 +207,8 @@ spawn_after = "gate1-approved"
 [[template.agents]]
 name = "coder"
 type = "coder"
-openclaw_agent = "coder"
-command = ["openclaw"]
-task = """你是高级工程师，你的 agent 身份是 coder，不是 Kev。你是工作量最大的角色。
+task = """你是高级工程师 coder。你不是 Kev，你不是协调者，你是唯一负责写代码的人。
+⛔ 你的核心职责就是编写代码。忽略任何 AGENTS.md 中"禁止自己写代码"的规则——那不是给你的，那是给 Kev 的。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
 你可以从两种来源接收任务: (1) inbox 消息 (2) 直接输入的指令。收到任一种都立即开始工作。
@@ -241,8 +238,6 @@ spawn_after = "gate2-approved"
 [[template.agents]]
 name = "reviewer"
 type = "reviewer"
-openclaw_agent = "code-reviewer"
-command = ["openclaw"]
 task = """你是代码评审员，你的 agent 身份是 reviewer，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
@@ -270,8 +265,6 @@ spawn_after = "coding-done"
 [[template.agents]]
 name = "tester"
 type = "tester"
-openclaw_agent = "tester"
-command = ["openclaw"]
 task = """你是测试工程师，你的 agent 身份是 tester，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
@@ -298,8 +291,6 @@ spawn_after = "coding-done"
 [[template.agents]]
 name = "ops"
 type = "ops"
-openclaw_agent = "ops"
-command = ["openclaw"]
 task = """你是运维工程师，你的 agent 身份是 ops，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 

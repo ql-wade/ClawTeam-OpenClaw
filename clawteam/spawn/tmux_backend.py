@@ -63,6 +63,18 @@ def _openclaw_supports_agent_flag() -> bool:
         return False
 
 
+def _resolve_agent_workspace(openclaw_agent: str) -> str:
+    """Return the per-agent workspace path (e.g. ~/.openclaw/workspaces/coder/).
+
+    Falls back to the shared worker-workspace if the agent-specific directory
+    does not exist, ensuring we never point OPENCLAW_WORKSPACE at a missing dir.
+    """
+    agent_ws = Path.home() / ".openclaw" / "workspaces" / openclaw_agent
+    if agent_ws.is_dir():
+        return str(agent_ws)
+    return _ensure_worker_workspace()
+
+
 def _ensure_worker_workspace() -> str:
     """Create and return the path to an isolated minimal workspace for OpenClaw workers.
 
@@ -105,6 +117,7 @@ class TmuxBackend(SpawnBackend):
             return _tmux_unavailable_message("spawn")
 
         # Check --agent support once, gate all uses of openclaw_agent
+        original_openclaw_agent = openclaw_agent
         if openclaw_agent and not _openclaw_supports_agent_flag():
             print(
                 f"Warning: openclaw tui does not support --agent (requested: {openclaw_agent!r}). "
@@ -155,9 +168,17 @@ class TmuxBackend(SpawnBackend):
 
         # Isolate OpenClaw workers from the user's workspace rules (SOUL.md, AGENTS.md, USER.md)
         # to prevent NO_REPLY behavior or workspace-rule pollution.
+        # When openclaw_agent is specified, use the agent's own workspace (e.g.
+        # ~/.openclaw/workspaces/coder/) so the worker inherits the correct agent
+        # identity, AGENTS.md, and configuration.  Fall back to the shared
+        # worker-workspace when no specific agent is requested.
         if is_openclaw_command(command):
-            worker_ws = _ensure_worker_workspace()
-            env_vars["OPENCLAW_WORKSPACE"] = worker_ws
+            if original_openclaw_agent:
+                agent_ws = _resolve_agent_workspace(original_openclaw_agent)
+                env_vars["OPENCLAW_WORKSPACE"] = agent_ws
+            else:
+                worker_ws = _ensure_worker_workspace()
+                env_vars["OPENCLAW_WORKSPACE"] = worker_ws
             propagate_openclaw_gateway_token(env_vars)
 
         normalized_command = normalize_spawn_command(command)
