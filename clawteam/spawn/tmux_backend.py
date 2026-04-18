@@ -209,7 +209,9 @@ class TmuxBackend(SpawnBackend):
             final_command.extend(["--model", model])
 
         if is_openclaw_command(normalized_command):
-            session_key = f"clawteam-{team_name}-{agent_name}"
+            # openclaw gateway routes by session key: agent:<agentId>:<rest>
+            oc_agent = openclaw_agent or agent_name
+            session_key = f"agent:{oc_agent}:clawteam-{team_name}"
             if final_command[0].endswith("openclaw") and len(final_command) == 1:
                 final_command = [final_command[0], "tui", "--session", session_key]
                 if model:
