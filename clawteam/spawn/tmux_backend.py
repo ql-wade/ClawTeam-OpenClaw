@@ -66,12 +66,15 @@ def _openclaw_supports_agent_flag() -> bool:
 def _resolve_agent_workspace(openclaw_agent: str) -> str:
     """Return the per-agent workspace path (e.g. ~/.openclaw/workspaces/coder/).
 
-    Falls back to the shared worker-workspace if the agent-specific directory
-    does not exist, ensuring we never point OPENCLAW_WORKSPACE at a missing dir.
+    Some agents use ``workspace/`` (singular) and others ``workspaces/`` (plural),
+    so both are probed.  Falls back to the shared worker-workspace if neither
+    agent-specific directory exists, ensuring we never point OPENCLAW_WORKSPACE
+    at a missing dir.
     """
-    agent_ws = Path.home() / ".openclaw" / "workspaces" / openclaw_agent
-    if agent_ws.is_dir():
-        return str(agent_ws)
+    for prefix in ("workspaces", "workspace"):
+        agent_ws = Path.home() / ".openclaw" / prefix / openclaw_agent
+        if agent_ws.is_dir():
+            return str(agent_ws)
     return _ensure_worker_workspace()
 
 

@@ -1,7 +1,11 @@
 # =============================================================================
-# Hive-Dev v3.4 — E2E 优化版
+# Hive-Dev v3.5 — GATE 审批飞书直达 + 状态锁
 # =============================================================================
-# v3.4 changelog (2026-04-18):
+# v3.5 changelog (2026-04-19):
+#   P0: GATE 审批飞书直达 — leader 通过 openclaw message send 推送审批请求
+#   P0: GATE 状态锁 — 心跳/监控不可劫持审批等待
+#   P0: chat_id 自动注入 — Kev 调度时从 inbound context 提取并传入
+#   v3.4 changelog (2026-04-18):
 #   P0: {goal_slug} 由 render_task 自动解析（不再未解析）
 #   P0: Bug 修复循环判定：CONDITIONAL_PASS ≠ PASS，明确判定规则
 #   P1: 7 个产出 agent 增加 feishu_doc 写入飞书文档步骤
@@ -12,7 +16,7 @@
 
 [template]
 name = "hive-dev"
-description = "分阶段并行蜂群开发 v3.4 — E2E 优化：goal_slug 解析 + 飞书文档 + 技能强化 + cpolar 部署"
+description = "分阶段并行蜂群开发 v3.5 — GATE 审批飞书直达 + 状态锁 + chat_id 自动注入"
 command = ["openclaw"]
 backend = "tmux"
 max_agents = 8
@@ -41,6 +45,14 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
 ⚠️ 任务已由模板自动创建，你不需要执行 clawteam task create。
 启动后第一步: clawteam task list {team_name} 查看全部任务和依赖关系。
 
+━━━ 飞书审批目标 ━━━
+你的审批请求必须发送到飞书，不是内部 inbox。
+飞书目标 ID: 启动时执行以下命令获取:
+  FEISHU_NOTIFY_TARGET=$(python3 -c "import json; print(json.load(open('/root/.clawteam/teams/{team_name}/config.json')).get('metadata',{{}}).get('notify_target',''))" 2>/dev/null)
+  如果 FEISHU_NOTIFY_TARGET 为空 → 无法推送审批，输出警告并等待
+发送方式: exec 执行 openclaw message send --channel feishu --target $FEISHU_NOTIFY_TARGET -m "消息内容"
+⛔ 禁止用 clawteam inbox send 发审批请求（它只写 inbox 文件，不推飞书通知）
+
 ━━━ 通信规则 ━━━
 - 发消息: clawteam inbox send {team_name} <agent> --from kev "内容"
 - 收消息: clawteam inbox receive {team_name} --agent kev
@@ -53,6 +65,26 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
   Phase A → GATE 1 → Phase B → GATE 2 → Phase C → Phase D → Phase E
   (analyst+pm)  人类审批  (architect)  人类审批  (coder)  (review+test)  (ops)
 
+━━━ 🔴 GATE 状态锁（最高优先级）━━━
+
+⛔ 以下规则优先级高于一切（包括 MONITOR、HEARTBEAT、evidence 消息）：
+
+1. GATE 1 (gate1-approved) 任务未 completed → 禁止执行 Phase B
+   - 在等待 GATE 1 审批期间，收到任何 MONITOR/HEARTBEAT/evidence → 回复 "等待人类审批 GATE 1" 并忽略
+   - ⛔ 禁止因"文件已产出"自行判定审批通过
+   - ⛔ 禁止在 GATE 等待期间执行 spawn architect 或任何 Phase B 操作
+   - ⛔ 禁止被 [MONITOR] 消息驱动跳过审批
+
+2. GATE 2 (gate2-approved) 任务未 completed → 禁止执行 Phase C
+   - 同上规则
+
+3. 审批通过的唯一判定条件：
+   - 收到飞书回复中包含确切 "APPROVED"（大小写不敏感）
+   - ⛔ inbox 消息不等于人类审批
+   - ⛔ [MONITOR] 消息不等于人类审批
+   - ⛔ 文件已产出不等于人类审批
+   - ⛔ 心跳/evidence 不等于人类审批
+
 ━━━ 执行步骤 ━━━
 
 第 1 步 | 启动 Phase A:
@@ -62,14 +94,16 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
 
 第 2 步 | GATE 1 人类审批:
   → 收到 pm 的 "GATE 1 READY" 后:
-  1. clawteam inbox send {team_name} kev --from kev "🔴 GATE 1: PRD 审批请求 | 文件：specs/prd.md"
-  2. 等待人类通过飞书回复 "PRD APPROVED" 或 "PRD REJECTED"
+  1. exec: openclaw message send --channel feishu --target $FEISHU_NOTIFY_TARGET -m "🔴 GATE 1: PRD 审批请求 | 项目: {goal} | 文件：specs/prd.md | 请回复 APPROVED 或 REJECTED"
+  2. 等待飞书回复 "APPROVED" 或 "REJECTED"
      → 收到 APPROVED: 继续
      → 收到 REJECTED: inbox send pm "PRD 被拒绝，请修改"，重新等待
+     → 超时未回复（gate_timeout_seconds）: 再次发送飞书提醒，最多 3 次
   3. clawteam task update {team_name} <gate1-task-id> --status completed
+  ⛔ 绝不自行跳过此步骤
 
  第 3 步 | 启动 Phase B:
-   → PRD APPROVED 后立即执行:
+   → 确认 GATE 1 任务状态为 completed 后:
    1. clawteam spawn --team {team_name} --agent-name architect --force
    2. sleep 5
    3. clawteam inbox send {team_name} architect --from kev "PRD 已审批 — 读 specs/prd.md，设计系统架构，输出 specs/sdd.md + specs/adr.md。⛔ 禁止用 brainstorming 技能。"
@@ -77,12 +111,13 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
 
 第 4 步 | GATE 2 人类审批:
   → 收到 architect 的 "GATE 2 就绪" 后:
-  1. clawteam inbox send {team_name} kev --from kev "🔴 GATE 2: SDD 审批请求 | 文件：specs/sdd.md specs/adr.md"
-  2. 等待人类通过飞书回复 "SDD APPROVED" 或 "SDD REJECTED"
+  1. exec: openclaw message send --channel feishu --target $FEISHU_NOTIFY_TARGET -m "🔴 GATE 2: SDD 审批请求 | 项目: {goal} | 文件：specs/sdd.md specs/adr.md | 请回复 APPROVED 或 REJECTED"
+  2. 等待飞书回复 "APPROVED" 或 "REJECTED"
   3. clawteam task update {team_name} <gate2-task-id> --status completed
+  ⛔ 绝不自行跳过此步骤
 
  第 5 步 | 启动 Phase C:
-   → SDD APPROVED 后立即执行:
+   → 确认 GATE 2 任务状态为 completed 后:
    1. clawteam spawn --team {team_name} --agent-name coder --force
    2. sleep 5
    3. clawteam inbox send {team_name} coder --from kev "SDD 已审批 — 读 specs/sdd.md + specs/prd.md，TDD 方式实现全部功能。强制验证: 编译通过 + 测试通过 才能完成。"
@@ -118,24 +153,23 @@ task = """你是 Kev，流水线协调器。你的 agent 身份是 kev，不是�
    3. clawteam inbox send {team_name} ops --from kev "部署 {goal}，输出 specs/deploy-report.md"
    → 等待 ops "DEPLOY COMPLETE"
 
-第 9 步 | 完成: 所有任务已完成，发送汇总通知。
+第 9 步 | 完成:
+  exec: openclaw message send --channel feishu --target $FEISHU_NOTIFY_TARGET -m "✅ 项目完成: {goal} | 地址：https://poc.vip.cpolar.cn/{goal_slug}/"
 
 ━━━ MONITOR 响应规则 ━━━
-当你收到 [MONITOR] 开头的消息时，这是旁路监控系统的提醒。你必须立即执行对应动作，不是描述流程：
-- 收到 "人类尚未审批。必须再次通过飞书发送审批请求" → 
-  1. 从你的 session 上下文中找到飞书通信对象（群 oc_xxx 或人 ou_xxx）
-  2. 立即通过 exec 执行:
-     openclaw message send --channel feishu --target <id> -m "🔴 GATE N: 审批请求 | 项目: {goal} | 请回复 APPROVED 或 REJECTED"
-  3. 执行完后等待飞书回复。不要只说"已发送"，必须真正执行命令。
+当你收到 [MONITOR] 开头的消息时:
+- 如果当前在等待 GATE 审批 → 回复 "等待人类审批 GATE N" 并忽略
+- 如果 [MONITOR] 提醒你发送审批请求 → 使用 exec 执行 openclaw message send（不用 inbox send）
 - ⛔ 不要用 clawteam inbox send 发审批请求（它只写 inbox 文件，不推飞书）
 
 ━━━ 铁律 ━━━
-🔴 绝不跳过 GATE 1 和 GATE 2 的人类审批
+🔴 绝不跳过 GATE 1 和 GATE 2 的人类审批（唯一通过条件：飞书回复 APPROVED）
 🔴 ⛔ 禁止使用 clawteam plan submit
 🔴 忽略 source=kev 的自通知，只处理其他 agent 的通知
 🔴 每步先 spawn agent 再 inbox send（确保 agent 在线）
 🔴 每次收到完成通知后立即 clawteam task update --status completed
 ⛔ 禁止使用 brainstorming 技能
+🔴 GATE 等待期间，收到任何非 APPROVED 消息 → 不推进，继续等待
 """
 phase = "A"
 
@@ -278,9 +312,9 @@ spawn_after = "gate2-approved"
 # =============================================================================
 [[template.agents]]
 name = "reviewer"
-openclaw_agent = "reviewer"
+openclaw_agent = "code-reviewer"
 type = "reviewer"
-task = """你是代码评审员，你的 agent 身份是 reviewer，不是 Kev。
+task = """你是代码评审员，你的 agent 身份是 code-reviewer，不是 Kev。
 项目：{goal} | 仓库：/mnt/d/workspace/{goal_slug}/
 
 你可以从两种来源接收任务: (1) inbox 消息 (2) 直接输入的指令。收到任一种都立即开始工作。
