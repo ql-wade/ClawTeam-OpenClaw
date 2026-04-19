@@ -176,6 +176,8 @@ class TmuxBackend(SpawnBackend):
             if original_openclaw_agent:
                 agent_ws = _resolve_agent_workspace(original_openclaw_agent)
                 env_vars["OPENCLAW_WORKSPACE"] = agent_ws
+                # exec-approvals.json per-agent allowlists require this env var
+                env_vars["OPENCLAW_AGENT"] = original_openclaw_agent
             else:
                 worker_ws = _ensure_worker_workspace()
                 env_vars["OPENCLAW_WORKSPACE"] = worker_ws
